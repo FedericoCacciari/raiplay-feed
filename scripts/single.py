@@ -1,34 +1,21 @@
-import os
-import tempfile
 import requests
-import re
-from datetime import datetime as dt, timedelta
-from urllib.parse import urljoin
+from pprint import pprint
 from feedendum import Feed, FeedItem, to_rss_string
+from urllib.parse import urljoin
 from itertools import chain
+from datetime import datetime as dt, timedelta
+import tempfile
+import os
 
 NSITUNES = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
-
-def resolve_final_mp3_url(indirect_url):
-    try:
-        session = requests.Session()
-        response = session.get(indirect_url, timeout=10)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            for audio_tag in soup.find_all('audio'):
-                src = audio_tag.get('src')
-                if src and src.endswith(".mp3"):
-                    return src
-            match = re.search(r'https?://[^\s"]+\.mp3', response.text)
-            if match:
-                return match.group(0)
-        return indirect_url
-    except Exception:
-        return indirect_url
-
 def url_to_filename(url: str) -> str:
     return url.split("/")[-1] + ".xml"
 
+BASEURL = "https://www.raiplaysound.it/programmi/ilruggitodelconiglio"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Referer": "https://www.raiplaysound.it/"
+}
 def _datetime_parser(s: str) -> dt:
     formats = [
         "%a, %d %b %Y %H:%M:%S %z",
@@ -44,12 +31,47 @@ def _datetime_parser(s: str) -> dt:
             continue
     return dt.now()
 
+
+def parseplaylist(BASEURL:str) -> dict:
+    playlistjson = requests.get(BASEURL + ".json").json()
+
+# pprint(playlistjson)
+
+    return playlistjson
+
+
+def requestFileURL(url):
+    global HEADERS
+    response = requests.get(url, headers = HEADERS, stream = True, allow_redirects=True)
+    if response.url.endswith(".mp3"):
+        return response.url
+    else:
+        contenuto_m3u8 = response.text
+        m3u_parse = contenuto_m3u8.rsplit("\n")
+        m3u_parse.pop(-1)
+        return response.url.replace("playlist.m3u8", m3u_parse[-1])
+
+playlistjson = parseplaylist(BASEURL)
+episodes : list = playlistjson.get("block", {}).get("cards", [])
+
+def extractEpisodeUrl(episode) -> str:
+    url = episode.get("audio", {}).get("url", "")
+    if url.startswith("ttp"):
+        url = url.replace("ttp", "https")
+    return url
+
+
+
+
+
 class RaiParser:
+    
     def __init__(self, url: str, folderPath: str) -> None:
         self.url = url
-        self.folderPath = folderPath
+        self.folderPath = folderPath if folderPath else os.getcwd()
 
     def process(self) -> None:
+        global VALUE
         response = requests.get(self.url + ".json")
         response.raise_for_status()
         rdata = response.json()
@@ -87,13 +109,14 @@ class RaiParser:
             fitem.content = item.get("description", item["title"])
 
             enclosure_url = item["audio"].get("url")
-            if item.get("downloadable_audio", {}).get("url"):
-                enclosure_url = item["downloadable_audio"]["url"].replace("http:", "https:")
+            relinkURL = extractEpisodeUrl(item)
+
+            fileUrl = requestFileURL(relinkURL)
 
             fitem._data = {
                 "enclosure": {
                     "@type": "audio/mpeg",
-                    "@url": urljoin(self.url, enclosure_url),
+                    "@url": fileUrl,
                 },
                 f"{NSITUNES}title": fitem.title,
                 f"{NSITUNES}summary": fitem.content,
@@ -135,3 +158,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+# percorso_relativo = contenuto_m3u8.split('\n')[3].strip() # es: chunklist_b1758000...m3u8

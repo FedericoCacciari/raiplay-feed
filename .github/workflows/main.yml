@@ -1,0 +1,67 @@
+name: Update RaiPlaySound Feeds
+on:
+  schedule:
+    # Esegue ogni ora
+    - cron: "0 */1 * * *" 
+  workflow_dispatch:
+
+# Permessi necessari per l'autenticazione. 
+# "contents: write" permette al GITHUB_TOKEN di fare il push.
+permissions:
+  contents: write
+
+jobs:
+  update-feeds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          # Passa il token integrato per le successive operazioni git push
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Non serve più 'persist-credentials: false'
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+          
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 lxml feedendum chardet python-dateutil certifi
+          
+      - name: Generate Feeds
+        run: python scripts/generate_feeds.py
+        
+      - name: Debug - Verifica file generati
+        run: |
+          echo "Contenuto della directory:"
+          ls -l
+          echo "Contenuto dei feed XML:"
+          for file in feed_*.xml; do
+            echo "Contenuto di $file:"
+            cat "$file"
+            echo "-----------------------------"
+          done
+          
+      - name: Verifica dimensione file XML
+        run: |
+          for file in feed_*.xml; do
+            size=$(wc -c < "$file")
+            if [ "$size" -lt 50 ]; then
+              echo "Il file $file è troppo piccolo, potrebbe essere vuoto!"
+            fi
+          done
+          
+      - name: Commit and Push
+        run: |
+          # Configura l'identità del committer (utente github-actions)
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          
+          # Aggiunge i file generati
+          git add feed_*.xml || true
+          
+          # Verifica se ci sono differenze nello staging area (cioè, se 'git add' ha aggiunto qualcosa)
+          # Se ci sono differenze (cioè, il feed è cambiato), allora committa e fai il push
+          git diff --staged --quiet || (git commit -m "Aggiornamento automatico dei feeds" && git push)
